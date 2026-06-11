@@ -1,13 +1,9 @@
 import contextlib
-import hashlib
 import os
 import re
-import time
 from pathlib import Path
 from typing import Any
 
-import httpx
-import jwt
 from mcp.server.fastmcp import FastMCP
 from pypdf import PdfReader, PdfWriter
 from reportlab.lib.pagesizes import A4
@@ -23,96 +19,6 @@ mcp = FastMCP(
     stateless_http=True,
     json_response=True,
 )
-
-
-def _base_url() -> str:
-    return os.getenv("EURO_OFFICE_BASE_URL", "http://localhost:8080").rstrip("/")
-
-
-def _timeout_seconds() -> float:
-    return float(os.getenv("EURO_OFFICE_TIMEOUT_SECONDS", "20"))
-
-
-def _command_path() -> str:
-    return os.getenv("EURO_OFFICE_COMMAND_PATH", "/coauthoring/CommandService.ashx")
-
-
-def _convert_path() -> str:
-    return os.getenv("EURO_OFFICE_CONVERT_PATH", "/ConvertService.ashx")
-
-
-def _safe_path(path: str) -> str:
-    if not path.startswith("/"):
-        return f"/{path}"
-    return path
-
-
-def _jwt_header_name() -> str:
-    return os.getenv("EURO_OFFICE_JWT_HEADER", "Authorization")
-
-
-def _jwt_prefix() -> str:
-    return os.getenv("EURO_OFFICE_JWT_PREFIX", "Bearer")
-
-
-def _jwt_secret() -> str | None:
-    return os.getenv("EURO_OFFICE_JWT_SECRET")
-
-
-def _build_token(payload: dict[str, Any]) -> str | None:
-    secret = _jwt_secret()
-    if not secret:
-        return None
-
-    now = int(time.time())
-    envelope = {
-        "iat": now,
-        "exp": now + 300,
-        "payload": payload,
-    }
-    return jwt.encode(envelope, secret, algorithm="HS256")
-
-
-def _auth_headers(payload: dict[str, Any] | None = None) -> dict[str, str]:
-    headers = {"Content-Type": "application/json"}
-    token = _build_token(payload or {})
-
-    if token:
-        prefix = _jwt_prefix().strip()
-        value = f"{prefix} {token}" if prefix else token
-        headers[_jwt_header_name()] = value
-
-    return headers
-
-
-async def _post_json(path: str, body: dict[str, Any]) -> dict[str, Any]:
-    url = f"{_base_url()}{_safe_path(path)}"
-    headers = _auth_headers(body)
-
-    async with httpx.AsyncClient(timeout=_timeout_seconds()) as client:
-        response = await client.post(url, json=body, headers=headers)
-        response.raise_for_status()
-        return response.json()
-
-
-async def _get(path: str) -> dict[str, Any]:
-    url = f"{_base_url()}{_safe_path(path)}"
-    async with httpx.AsyncClient(timeout=_timeout_seconds()) as client:
-        response = await client.get(url)
-        response.raise_for_status()
-        return {"status_code": response.status_code, "body": response.text}
-
-
-def _extension(filename: str) -> str:
-    parts = filename.rsplit(".", 1)
-    if len(parts) < 2:
-        return "docx"
-    return parts[1].lower()
-
-
-def _default_key(document_url: str, callback_url: str, filename: str) -> str:
-    source = f"{document_url}|{callback_url}|{filename}"
-    return hashlib.sha256(source.encode("utf-8")).hexdigest()[:32]
 
 
 def _ensure_parent(path: Path) -> None:
@@ -287,226 +193,18 @@ def _rewrite_pdf_text_from_actions(input_path: Path, output_path: Path, actions:
 
 
 @mcp.tool()
-async def check_health() -> dict:
-    """Check Euro-Office DocumentServer health endpoint."""
-    try:
-        result = await _get("/healthcheck")
-        return {
-            "ok": True,
-            "base_url": _base_url(),
-            "healthcheck": result,
-        }
-    except Exception as exc:
-        return {
-            "ok": False,
-            "base_url": _base_url(),
-            "error": str(exc),
-        }
-
-
-@mcp.tool()
-async def build_editor_config(
-    document_url: str,
-    callback_url: str,
-    filename: str,
-    document_type: str = "word",
-    mode: str = "edit",
-    user_id: str = "mcp-user",
-    user_name: str = "MCP User",
-    autosave: bool = True,
-    can_download: bool = True,
-    can_print: bool = True,
-    key: str | None = None,
-    lang: str = "en",
-) -> dict:
-    """Build a Euro-Office editor config for Word, PDF, and other docs.
-
-    Args:
-        document_url: Public URL the editor can download from.
-        callback_url: Your app callback URL for save/forcesave events.
-        filename: Document filename including extension.
-        document_type: editor type: word, cell, slide, or pdf.
-        mode: edit or view.
-        user_id: Stable user ID.
-        user_name: Display name.
-        autosave: Enable auto-save in editor.
-        can_download: Allow downloading from editor UI.
-        can_print: Allow printing from editor UI.
-        key: Optional stable doc key. Auto-generated if omitted.
-        lang: Editor language code, for example en or sv.
-    """
-    document_type = document_type.lower().strip()
-    if document_type not in {"word", "cell", "slide", "pdf"}:
-        return {"error": f"Unsupported document_type: {document_type}"}
-
-    editor_mode = mode.lower().strip()
-    if editor_mode not in {"edit", "view"}:
-        return {"error": f"Unsupported mode: {mode}"}
-
-    final_key = key or _default_key(document_url, callback_url, filename)
-
-    config = {
-        "document": {
-            "fileType": _extension(filename),
-            "key": final_key,
-            "title": filename,
-            "url": document_url,
-            "permissions": {
-                "edit": editor_mode == "edit",
-                "download": can_download,
-                "print": can_print,
-            },
-        },
-        "documentType": document_type,
-        "editorConfig": {
-            "callbackUrl": callback_url,
-            "lang": lang,
-            "mode": editor_mode,
-            "user": {
-                "id": user_id,
-                "name": user_name,
-            },
-            "customization": {
-                "autosave": autosave,
-            },
-        },
-    }
-
-    return {
-        "base_url": _base_url(),
-        "editor_config": config,
-        "notes": [
-            "Use this payload in your integration frontend when opening Euro-Office editor.",
-            "Keep document.key stable for the same logical document revision to preserve collaboration state.",
-        ],
-    }
-
-
-@mcp.tool()
-async def convert_document(
-    file_url: str,
-    file_type: str,
-    output_type: str,
-    title: str = "document",
-    key: str | None = None,
-    lang: str = "en",
-) -> dict:
-    """Convert a document using Euro-Office conversion endpoint.
-
-    Args:
-        file_url: Source file URL reachable from DocumentServer.
-        file_type: Source extension without dot, for example docx or pdf.
-        output_type: Target extension without dot, for example pdf or docx.
-        title: Optional title used by conversion service.
-        key: Optional conversion key. Auto-generated if omitted.
-        lang: Language code for conversion context.
-    """
-    final_key = key or hashlib.sha256(f"{file_url}|{file_type}|{output_type}".encode("utf-8")).hexdigest()[:32]
-
-    body = {
-        "async": False,
-        "filetype": file_type.lower().lstrip("."),
-        "key": final_key,
-        "outputtype": output_type.lower().lstrip("."),
-        "title": title,
-        "url": file_url,
-        "lang": lang,
-    }
-
-    try:
-        data = await _post_json(_convert_path(), body)
-        return {
-            "ok": True,
-            "request": body,
-            "response": data,
-            "convert_path": _convert_path(),
-        }
-    except Exception as exc:
-        return {
-            "ok": False,
-            "request": body,
-            "convert_path": _convert_path(),
-            "error": str(exc),
-        }
-
-
-@mcp.tool()
-async def command_force_save(document_key: str, userdata: str | None = None) -> dict:
-    """Trigger a force-save command for an open document key."""
-    body: dict[str, Any] = {
-        "c": "forcesave",
-        "key": document_key,
-    }
-
-    if userdata:
-        body["userdata"] = userdata
-
-    try:
-        data = await _post_json(_command_path(), body)
-        return {
-            "ok": True,
-            "request": body,
-            "response": data,
-            "command_path": _command_path(),
-        }
-    except Exception as exc:
-        return {
-            "ok": False,
-            "request": body,
-            "command_path": _command_path(),
-            "error": str(exc),
-        }
-
-
-@mcp.tool()
-async def command_info(document_key: str) -> dict:
-    """Get document session info for a document key."""
-    body = {
-        "c": "info",
-        "key": document_key,
-    }
-
-    try:
-        data = await _post_json(_command_path(), body)
-        return {
-            "ok": True,
-            "request": body,
-            "response": data,
-            "command_path": _command_path(),
-        }
-    except Exception as exc:
-        return {
-            "ok": False,
-            "request": body,
-            "command_path": _command_path(),
-            "error": str(exc),
-        }
-
-
-@mcp.tool()
 async def describe_capabilities() -> dict:
-    """Describe what this MCP supports for Word and PDF workflows."""
+    """Describe what this MCP supports for document editing."""
     return {
         "server": "mcp.office",
-        "base_url": _base_url(),
-        "supports": {
-            "word": [
-                "build_editor_config(document_type='word')",
-                "convert_document(..., output_type='docx'/'pdf'/'odt')",
-                "command_force_save",
-                "command_info",
-                "edit_document_from_prompt(input_path=..., output_path=..., prompt=...)",
-            ],
-            "pdf": [
-                "build_editor_config(document_type='pdf')",
-                "convert_document(..., output_type='pdf'/'docx')",
-                "command_force_save",
-                "command_info",
-                "edit_document_from_prompt(input_path=..., output_path=..., prompt='Field=Value')",
-            ],
+        "capabilities": {
+            "edit_docx": "Headless editing of Word documents (.docx) using python-docx",
+            "edit_pdf_forms": "PDF form field filling using PyPDF",
+            "edit_pdf_text": "PDF text rewriting using reportlab (fallback for non-form PDFs)",
         },
-        "combined": True,
-        "headless_editing": True,
+        "tools": ["edit_document_from_prompt"],
+        "headless_only": True,
+        "backend_independent": True,
     }
 
 

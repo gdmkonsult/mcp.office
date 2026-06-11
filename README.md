@@ -1,38 +1,20 @@
 # mcp.office
 
-Combined MCP server for Euro-Office DocumentServer workflows focused on:
+Headless MCP server for document editing:
 
-- Word editor integration
-- PDF editing/form workflows
-- document conversion
-- force-save and session info commands
-- headless prompt-based document editing (no UI)
-
-## Why combined MCP
-
-Euro-Office DocumentServer exposes one command and conversion stack for multiple
-formats. A single MCP server gives one integration point while still supporting
-both Word and PDF use cases.
+- Word document editing (DOCX)
+- PDF form filling and text editing
+- Non-visual, prompt-based operations
+- No backend server required
 
 ## Tools
 
-- `check_health`: probes `/healthcheck` on DocumentServer
-- `build_editor_config`: generates editor payload for `word`, `cell`, `slide`, or `pdf`
-- `convert_document`: calls conversion endpoint
-- `command_force_save`: triggers force save for an active document key
-- `command_info`: fetches session info for a document key
-- `describe_capabilities`: quick summary of Word/PDF support
 - `edit_document_from_prompt`: non-visual editing for DOCX and PDF
+- `describe_capabilities`: quick summary of supported operations
 
 ## Environment variables
 
-- `EURO_OFFICE_BASE_URL` (default: `http://localhost:8080`)
-- `EURO_OFFICE_TIMEOUT_SECONDS` (default: `20`)
-- `EURO_OFFICE_COMMAND_PATH` (default: `/coauthoring/CommandService.ashx`)
-- `EURO_OFFICE_CONVERT_PATH` (default: `/ConvertService.ashx`)
-- `EURO_OFFICE_JWT_SECRET` (optional, enables signed requests)
-- `EURO_OFFICE_JWT_HEADER` (default: `Authorization`)
-- `EURO_OFFICE_JWT_PREFIX` (default: `Bearer`)
+None required. The MCP is fully self-contained.
 
 ## Local run
 
@@ -50,16 +32,60 @@ Health checks:
 
 ```bash
 docker build -t ghcr.io/gdmkonsult/mcp.office:main .
-docker run --rm -p 8000:8000 \
-  -e EURO_OFFICE_BASE_URL=http://documentserver:8080 \
-  -e EURO_OFFICE_JWT_SECRET=replace-me \
-  ghcr.io/gdmkonsult/mcp.office:main
+docker run --rm -p 8000:8000 ghcr.io/gdmkonsult/mcp.office:main
 ```
+
+## Usage
+
+### Edit a Word document
+
+```python
+import asyncio
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
+
+async def main():
+    async with streamablehttp_client("http://localhost:8000") as (read, write, _):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            result = await session.call_tool("edit_document_from_prompt", {
+                "input_path": "/tmp/document.docx",
+                "output_path": "/tmp/document_edited.docx",
+                "prompt": 'replace "Draft" with "Final"'
+            })
+            print(result)
+
+asyncio.run(main())
+```
+
+### Edit a PDF form
+
+```python
+result = await session.call_tool("edit_document_from_prompt", {
+    "input_path": "/tmp/form.pdf",
+    "output_path": "/tmp/form_filled.pdf",
+    "prompt": "FirstName=John\nLastName=Doe"
+})
+```
+
+## Prompt syntax
+
+### DOCX
+
+- `replace "old" with "new"` — replace text
+- `append paragraph "text"` — add paragraph at end
+- `prepend paragraph "text"` — add paragraph at start
+- `delete paragraph containing "text"` — remove matching line
+
+### PDF
+
+- `FieldName=Value` — fill form fields (one per line)
+- If no form fields exist, falls back to text rewrite using above DOCX syntax
 
 ## Notes
 
-- The MCP focuses on API-level editing orchestration, not UI automation.
-- Your host application still needs to serve files and callback endpoints.
-- Some environments use different command/convert paths; configure via env vars.
-- Headless DOCX editing supports prompt actions like replace, append, prepend, and delete paragraph containing.
-- Headless PDF editing supports either form-field updates (Field=Value prompt lines) or text-rewrite fallback that creates a new simplified PDF.
+- DOCX editing uses python-docx
+- PDF form editing uses PyPDF
+- PDF text rewriting uses reportlab and may lose original formatting
+- Files can be local paths or accessed from mounted volumes in Kubernetes
+
