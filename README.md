@@ -1,16 +1,26 @@
-# mcp.office
+# mcp.document-edit
 
-Headless MCP server for document editing:
+Headless MCP server for document editing (DOCX and PDF) with no backend required.
 
-- Word document editing (DOCX)
-- PDF form filling and text editing
-- Non-visual, prompt-based operations
-- No backend server required
+## Tier 1 Tools — Comprehensive Document Editing
 
-## Tools
+**Core editing:**
+- `edit_document_from_prompt`: non-visual editing for DOCX and PDF using natural language prompts
+- `format_text`: bold, italic, color, font size, alignment
+- `add_list` / `apply_list_formatting`: bullet and numbered lists
 
-- `edit_document_from_prompt`: non-visual editing for DOCX and PDF
-- `describe_capabilities`: quick summary of supported operations
+**Tables:**
+- `create_table`, `edit_table_cell`, `add_table_row`, `delete_table_row`
+
+**Document inspection & search:**
+- `get_document_structure`: metadata and document outline
+- `search_text`: find text in paragraphs and tables
+
+**Page elements:**
+- `add_header`, `add_footer`
+
+**PDF support:**
+- PDF form field filling and text editing
 
 ## Environment variables
 
@@ -31,8 +41,8 @@ Health checks:
 ## Docker
 
 ```bash
-docker build -t ghcr.io/gdmkonsult/mcp.office:main .
-docker run --rm -p 8000:8000 ghcr.io/gdmkonsult/mcp.office:main
+docker build -t ghcr.io/gdmkonsult/mcp.document-edit:main .
+docker run --rm -p 8000:8000 ghcr.io/gdmkonsult/mcp.document-edit:main
 ```
 
 ## Usage
