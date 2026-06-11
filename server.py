@@ -862,6 +862,9 @@ async def add_footer(
 
 
 # ===== HTTP HEALTH ENDPOINTS =====
+
+
+async def healthz(_request):
     return JSONResponse({"status": "ok"})
 
 
