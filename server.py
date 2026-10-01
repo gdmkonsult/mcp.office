@@ -22,6 +22,33 @@ mcp = FastMCP(
     json_response=True,
 )
 
+# Alla filåtkomster begränsas till WORKSPACE_DIR (sandbox). Relativa sökvägar
+# tolkas mot WORKSPACE_DIR; absoluta sökvägar utanför katalogen avvisas.
+WORKSPACE_DIR = Path(os.environ.get("DOC_WORKSPACE_DIR", "/data")).resolve()
+
+
+def _sandbox_path(path_str: str) -> Path:
+    p = (WORKSPACE_DIR / path_str).resolve()
+    if not p.is_relative_to(WORKSPACE_DIR):
+        raise ValueError(f"Path outside workspace: {path_str}")
+    return p
+
+
+def _sandbox_pair(input_path: str, output_path: str) -> tuple[Path, Path] | dict:
+    """Sandlådesläser både input- och output-sökväg. Returnerar (src, dst) eller
+    ett feldict i filens befintliga felstil."""
+    try:
+        return _sandbox_path(input_path), _sandbox_path(output_path)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+
+
+def _sandbox_input(input_path: str) -> Path | dict:
+    try:
+        return _sandbox_path(input_path)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+
 
 def _ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -240,8 +267,10 @@ async def edit_document_from_prompt(input_path: str, output_path: str, prompt: s
     - delete paragraph containing "text"
     - PDF form filling with lines like: FieldName=Value
     """
-    src = Path(input_path)
-    dst = Path(output_path)
+    sandboxed = _sandbox_pair(input_path, output_path)
+    if isinstance(sandboxed, dict):
+        return sandboxed
+    src, dst = sandboxed
 
     if not src.exists():
         return {"ok": False, "error": f"Input file does not exist: {input_path}"}
@@ -307,8 +336,10 @@ async def format_text(
         color: Hex color code (e.g. "#FF0000" for red)
         alignment: "left", "center", "right", or "justify"
     """
-    src = Path(input_path)
-    dst = Path(output_path)
+    sandboxed = _sandbox_pair(input_path, output_path)
+    if isinstance(sandboxed, dict):
+        return sandboxed
+    src, dst = sandboxed
 
     if not src.exists():
         return {"ok": False, "error": f"Input file does not exist: {input_path}"}
@@ -389,8 +420,10 @@ async def add_list(
         items: List of items to add
         list_type: "bullet" for bullets, "number" for numbered list
     """
-    src = Path(input_path)
-    dst = Path(output_path)
+    sandboxed = _sandbox_pair(input_path, output_path)
+    if isinstance(sandboxed, dict):
+        return sandboxed
+    src, dst = sandboxed
 
     if not src.exists():
         return {"ok": False, "error": f"Input file does not exist: {input_path}"}
@@ -434,8 +467,10 @@ async def apply_list_formatting(
         paragraph_indices: List of paragraph indices to format (0-based)
         list_type: "bullet" for bullets, "number" for numbered list
     """
-    src = Path(input_path)
-    dst = Path(output_path)
+    sandboxed = _sandbox_pair(input_path, output_path)
+    if isinstance(sandboxed, dict):
+        return sandboxed
+    src, dst = sandboxed
 
     if not src.exists():
         return {"ok": False, "error": f"Input file does not exist: {input_path}"}
@@ -483,8 +518,10 @@ async def create_table(
         cols: Number of columns
         data: 2D list of cell values (optional)
     """
-    src = Path(input_path)
-    dst = Path(output_path)
+    sandboxed = _sandbox_pair(input_path, output_path)
+    if isinstance(sandboxed, dict):
+        return sandboxed
+    src, dst = sandboxed
 
     if not src.exists():
         return {"ok": False, "error": f"Input file does not exist: {input_path}"}
@@ -535,8 +572,10 @@ async def edit_table_cell(
         col: Column index (0-based)
         text: New cell text
     """
-    src = Path(input_path)
-    dst = Path(output_path)
+    sandboxed = _sandbox_pair(input_path, output_path)
+    if isinstance(sandboxed, dict):
+        return sandboxed
+    src, dst = sandboxed
 
     if not src.exists():
         return {"ok": False, "error": f"Input file does not exist: {input_path}"}
@@ -588,8 +627,10 @@ async def add_table_row(
         table_index: Index of table (0-based)
         row_data: Optional list of cell values for the new row
     """
-    src = Path(input_path)
-    dst = Path(output_path)
+    sandboxed = _sandbox_pair(input_path, output_path)
+    if isinstance(sandboxed, dict):
+        return sandboxed
+    src, dst = sandboxed
 
     if not src.exists():
         return {"ok": False, "error": f"Input file does not exist: {input_path}"}
@@ -638,8 +679,10 @@ async def delete_table_row(
         table_index: Index of table (0-based)
         row: Row index to delete (0-based)
     """
-    src = Path(input_path)
-    dst = Path(output_path)
+    sandboxed = _sandbox_pair(input_path, output_path)
+    if isinstance(sandboxed, dict):
+        return sandboxed
+    src, dst = sandboxed
 
     if not src.exists():
         return {"ok": False, "error": f"Input file does not exist: {input_path}"}
@@ -682,7 +725,10 @@ async def get_document_structure(input_path: str) -> dict:
     Args:
         input_path: Path to DOCX file
     """
-    src = Path(input_path)
+    sandboxed = _sandbox_input(input_path)
+    if isinstance(sandboxed, dict):
+        return sandboxed
+    src = sandboxed
 
     if not src.exists():
         return {"ok": False, "error": f"Input file does not exist: {input_path}"}
@@ -734,7 +780,10 @@ async def search_text(input_path: str, search_term: str) -> dict:
         input_path: Path to DOCX file
         search_term: Text to search for
     """
-    src = Path(input_path)
+    sandboxed = _sandbox_input(input_path)
+    if isinstance(sandboxed, dict):
+        return sandboxed
+    src = sandboxed
 
     if not src.exists():
         return {"ok": False, "error": f"Input file does not exist: {input_path}"}
@@ -792,8 +841,10 @@ async def add_header(
         output_path: Path to output DOCX file
         text: Header text to add
     """
-    src = Path(input_path)
-    dst = Path(output_path)
+    sandboxed = _sandbox_pair(input_path, output_path)
+    if isinstance(sandboxed, dict):
+        return sandboxed
+    src, dst = sandboxed
 
     if not src.exists():
         return {"ok": False, "error": f"Input file does not exist: {input_path}"}
@@ -833,8 +884,10 @@ async def add_footer(
         output_path: Path to output DOCX file
         text: Footer text to add
     """
-    src = Path(input_path)
-    dst = Path(output_path)
+    sandboxed = _sandbox_pair(input_path, output_path)
+    if isinstance(sandboxed, dict):
+        return sandboxed
+    src, dst = sandboxed
 
     if not src.exists():
         return {"ok": False, "error": f"Input file does not exist: {input_path}"}
